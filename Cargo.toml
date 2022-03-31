@@ -1,0 +1,16 @@
+[package]
+name = "settlement-analysis"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+anyhow = "1.0"
+bigdecimal = "0.2"
+clap = { version = "3.1", features = ["derive", "env"] }
+futures = { version = "0.3", default-features = false }
+num-traits = "0.2"
+primitive-types = { version = "0.10", features = ["fp-conversion"] }
+sqlx = { version = "0.5", default-features = false, features = ["bigdecimal", "chrono", "runtime-tokio-native-tls", "postgres", "macros"] }
+tokio = { version = "1.17", features = ["macros", "rt"] }
+web3 = { version = "0.18", default-features = false, features =  ["http-tls"] }
