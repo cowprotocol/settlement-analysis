@@ -105,9 +105,9 @@ fn print_settlement(receipt: &TransactionReceipt, orders: &[OrderRow]) {
         let sell_token = Hex(order.sell_token.as_ref().unwrap());
         let sell_token_price = order.sell_token_price.unwrap();
         let earned_fee = order.earned_fee.as_ref().unwrap().to_f64().unwrap();
-        let earned_fee_eth = earned_fee / sell_token_price / 1e18;
+        let earned_fee_eth = earned_fee * sell_token_price / 1e18;
         let unsubsidized_fee = order.unsubsidized_fee.as_ref().unwrap().to_f64().unwrap();
-        let unsubsidized_fee_eth = unsubsidized_fee / sell_token_price / 1e18;
+        let unsubsidized_fee_eth = unsubsidized_fee * sell_token_price / 1e18;
         let gas = order.gas_amount.unwrap();
         let gas_price = order.gas_price.unwrap();
         let gas_eth = gas * gas_price / 1e18;
