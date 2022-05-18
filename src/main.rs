@@ -15,6 +15,14 @@ struct Args {
     ///  URL for the order database.
     #[clap(long, env)]
     db: String,
+
+    /// Block number at start of analysis (inclusive).
+    #[clap(long, env)]
+    from: Option<i64>,
+
+    /// Block number at end of analysis (inclusive).
+    #[clap(long, env)]
+    to: Option<i64>,
 }
 
 #[tokio::main]
@@ -32,10 +40,18 @@ async fn main() -> Result<()> {
         .await
         .context("get current block")?
         .as_u64() as i64;
-    let start_block = current_block - 100;
-    println!("Showing settlements in the last 100 blocks\n");
+    let to = args.to.unwrap_or_else(|| {
+        println!("Supplied no end block; analysis will end at current block");
+        current_block
+    });
+    let from = args.from.unwrap_or_else(|| {
+        println!("Supplied no start block; analysis will start 100 blocks before end");
+        to - 100
+    });
+    anyhow::ensure!(from < to, "start has to be before end");
+    println!("Analysing settlements from block {from} to {to}\n");
 
-    let settlements: Vec<SettlementRow> = settlements(start_block, current_block, &mut connection)
+    let settlements: Vec<SettlementRow> = settlements(from, to, &mut connection)
         .try_collect()
         .await
         .context("get settlements from db")?;
