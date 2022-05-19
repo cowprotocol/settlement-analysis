@@ -3,8 +3,15 @@ use bigdecimal::BigDecimal;
 use clap::Parser;
 use futures::{stream::BoxStream, TryStreamExt};
 use num_traits::ToPrimitive;
-use sqlx::{Connection, PgConnection};
-use web3::types::{TransactionReceipt, H256};
+use sqlx::{
+    types::chrono::{DateTime, NaiveDateTime, Utc},
+    Connection, PgConnection,
+};
+use web3::{
+    transports::Http,
+    types::{BlockId, BlockNumber, TransactionReceipt, H256, U64},
+};
+type Web3 = web3::Web3<Http>;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -23,6 +30,25 @@ struct Args {
     /// Block number at end of analysis (inclusive).
     #[clap(long, env)]
     to: Option<i64>,
+
+    /// How many blocks the analysis should start before the end block.
+    /// This gets ignored if you pass --from.
+    #[clap(long, env, default_value = "100")]
+    blocks: i64,
+}
+
+async fn timestamp_at_block(web3: &Web3, block: U64) -> Result<DateTime<Utc>> {
+    let timestamp: i64 = web3
+        .eth()
+        .block(BlockId::Number(BlockNumber::Number(block.into())))
+        .await
+        .context("get current block")?
+        .ok_or_else(|| anyhow::anyhow!("block did not contain timestamp"))?
+        .timestamp
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("can't convert timestamp to i64"))?;
+    let naive = NaiveDateTime::from_timestamp(timestamp, 0);
+    Ok(DateTime::from_utc(naive, Utc))
 }
 
 #[tokio::main]
@@ -45,8 +71,11 @@ async fn main() -> Result<()> {
         current_block
     });
     let from = args.from.unwrap_or_else(|| {
-        println!("Supplied no start block; analysis will start 100 blocks before end");
-        to - 100
+        println!(
+            "Supplied no start block; analysis will start {} blocks before end",
+            args.blocks
+        );
+        to - args.blocks
     });
     anyhow::ensure!(from < to, "start has to be before end");
     println!("Analysing settlements from block {from} to {to}\n");
@@ -55,6 +84,8 @@ async fn main() -> Result<()> {
         .try_collect()
         .await
         .context("get settlements from db")?;
+    let mut over_payed_excess = 0.;
+    let mut over_payed_total = 0.;
     for settlement in settlements {
         println!(
             "settlement in tx {} in block {}",
@@ -79,11 +110,14 @@ async fn main() -> Result<()> {
             continue;
         }
         println!();
-        print_settlement(&receipt, &orders);
+        let analysis = print_settlement(&web3, &receipt, &orders).await;
+        over_payed_excess += analysis.0;
+        over_payed_total += analysis.1;
         println!(
             "\n--------------------------------------------------------------------------------\n"
         );
     }
+    println!("over payed (excess of 2x) {over_payed_excess:.1e}, over payed (total) {over_payed_total:.1e}");
     Ok(())
 }
 
@@ -109,13 +143,23 @@ struct OrderRow {
     gas_amount: Option<f64>,
     gas_price: Option<f64>,
     sell_token_price: Option<f64>,
+    creation_timestamp: Option<DateTime<Utc>>,
 }
 
-fn print_settlement(receipt: &TransactionReceipt, orders: &[OrderRow]) {
+async fn print_settlement(
+    web3: &Web3,
+    receipt: &TransactionReceipt,
+    orders: &[OrderRow],
+) -> (f64, f64) {
+    let settlement_timestamp = timestamp_at_block(web3, receipt.block_number.unwrap())
+        .await
+        .unwrap();
     let mut total_gas = 0.;
     let mut total_gas_eth = 0.;
     let mut total_earned_fee_eth = 0.;
     let mut total_unsubsidized_fee_eth = 0.;
+    let mut over_payed_excess = 0.;
+    let mut over_payed_total = 0.;
     for order in orders {
         let uid = Hex(&order.uid);
         let sell_token = Hex(order.sell_token.as_ref().unwrap());
@@ -127,14 +171,32 @@ fn print_settlement(receipt: &TransactionReceipt, orders: &[OrderRow]) {
         let gas = order.gas_amount.unwrap();
         let gas_price = order.gas_price.unwrap();
         let gas_eth = gas * gas_price / 1e18;
+        let order_age = settlement_timestamp.timestamp()
+            - order
+                .creation_timestamp
+                .and_then(|t| Some(t.timestamp()))
+                .unwrap_or_default();
+        let is_old = order_age > 20 * 60;
+        let age = if is_old { "old" } else { "recent" };
+        let gas_price_intolerated_difference =
+            receipt.effective_gas_price.unwrap().to_f64_lossy() - gas_price * 2.;
+        let gas_price_excess = receipt.effective_gas_price.unwrap().to_f64_lossy() - gas_price;
         println!(
             "\
             order {uid}, sell_token {sell_token}, sell_token_price {sell_token_price:.1e}, \
             earned fee {earned_fee:.1e} ({earned_fee_eth:.1e} eth), \
             unsubsidized fee {unsubsidized_fee:.1e} ({unsubsidized_fee_eth:.1e} eth) \
             gas {gas:.1e} at price {gas_price:.1e} for a total of {gas_eth:.1e} eth \
+            age {age} \
             ",
         );
+        if gas_price_intolerated_difference > 0. {
+            let over_payed_excessive = gas_price_intolerated_difference * gas / 1e18;
+            let over_payed = gas_price_excess * gas / 1e18;
+            over_payed_excess += over_payed_excessive;
+            over_payed_total += over_payed;
+            println!("over payed (excess of 2x) {over_payed_excess:.1e} over payed (total) {over_payed:.1e}");
+        }
         total_gas += gas;
         total_gas_eth += gas_eth;
         total_earned_fee_eth += earned_fee_eth;
@@ -155,6 +217,10 @@ fn print_settlement(receipt: &TransactionReceipt, orders: &[OrderRow]) {
         {gas:.1e} gas for {gas_eth:.1e} eth (price {gas_price:.1e})\
         ",
     );
+    if over_payed_excess > 0.0 {
+        println!("over payed (excess of 2x) {over_payed_excess:.1e}, over payed (total) {over_payed_total:.1e}");
+    }
+    (over_payed_excess, over_payed_total)
 }
 
 #[derive(sqlx::FromRow)]
@@ -192,7 +258,7 @@ fn orders(
 SELECT
     t.uid, t.sum_fee as earned_fee,
     o.sell_token, o.fee_amount as signed_fee, o.full_fee_amount as unsubsidized_fee,
-    f.gas_amount, f.gas_price, f.sell_token_price
+    f.gas_amount, f.gas_price, f.sell_token_price, o.creation_timestamp
 FROM (
     SELECT order_uid as uid, SUM(fee_amount) as sum_fee
     FROM trades t
