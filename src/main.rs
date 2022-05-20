@@ -117,7 +117,7 @@ async fn main() -> Result<()> {
             "\n--------------------------------------------------------------------------------\n"
         );
     }
-    println!("over payed (excess of 2x) {over_payed_excess:.1e}, over payed (total) {over_payed_total:.1e}");
+    println!("total over payed (excess of 2x) {over_payed_excess:.1e}, over payed (total) {over_payed_total:.1e}");
     Ok(())
 }
 
@@ -195,7 +195,7 @@ async fn print_settlement(
             let over_payed = gas_price_excess * gas / 1e18;
             over_payed_excess += over_payed_excessive;
             over_payed_total += over_payed;
-            println!("over payed (excess of 2x) {over_payed_excess:.1e} over payed (total) {over_payed:.1e}");
+            println!("order over payed (excess of 2x) {over_payed_excess:.1e} over payed (total) {over_payed:.1e}");
         }
         total_gas += gas;
         total_gas_eth += gas_eth;
@@ -218,7 +218,7 @@ async fn print_settlement(
         ",
     );
     if over_payed_excess > 0.0 {
-        println!("over payed (excess of 2x) {over_payed_excess:.1e}, over payed (total) {over_payed_total:.1e}");
+        println!("settlement over payed (excess of 2x) {over_payed_excess:.1e}, over payed (total) {over_payed_total:.1e}");
     }
     (over_payed_excess, over_payed_total)
 }
