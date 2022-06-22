@@ -200,7 +200,7 @@ FROM (
     GROUP BY uid
 ) AS t
 LEFT OUTER JOIN orders o ON o.uid = t.uid
-LEFT OUTER JOIN order_fee_parameters f ON f.order_uid = t.uid
+LEFT OUTER JOIN order_quotes f ON f.order_uid = t.uid
 ;";
     sqlx::query_as(query)
         .bind(settlement_block)
